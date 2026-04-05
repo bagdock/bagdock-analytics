@@ -1,0 +1,41 @@
+{
+  "name": "@bagdock/analytics",
+  "version": "0.1.0",
+  "description": "Bagdock Analytics SDK — lightweight client-side event tracking with batching and dedup",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bagdock/bagdock-analytics"
+  },
+  "homepage": "https://bagdock.com/docs/analytics",
+  "bugs": "https://github.com/bagdock/bagdock-analytics/issues",
+  "keywords": ["bagdock", "analytics", "tracking", "events", "sdk", "self-storage"],
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
