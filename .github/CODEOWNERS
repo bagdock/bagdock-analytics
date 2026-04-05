@@ -1,0 +1,12 @@
+# CODEOWNERS for bagdock/cli
+# Copy this file to .github/CODEOWNERS in the bagdock/cli repo.
+#
+# These owners are automatically requested for review on every PR.
+# Adjust the team/user handles to match your GitHub org structure.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: platform team owns everything
+*       @bagdock/platform
+
+# CI and release configuration
+.github/        @bagdock/platform
