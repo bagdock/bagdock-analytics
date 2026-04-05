@@ -20,5 +20,3 @@ jobs:
       - run: bun install
       - run: bunx tsup src/index.ts --format cjs,esm --dts --clean
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
