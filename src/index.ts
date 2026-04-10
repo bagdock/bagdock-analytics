@@ -44,7 +44,9 @@ export interface UTMParams {
 export function parseUTM(url?: string): UTMParams {
   if (typeof window === 'undefined' && !url) return {}
   try {
-    const params = new URL(url || window.location.href).searchParams
+    const raw = url ?? (typeof window !== 'undefined' ? window.location.href : '')
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const params = new URL(raw, base).searchParams
     const utm: UTMParams = {}
     for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as const) {
       const val = params.get(key)
@@ -61,7 +63,8 @@ const UTM_STORAGE_KEY = 'bagdock_utm'
 function persistUTM(utm: UTMParams): void {
   if (typeof sessionStorage === 'undefined') return
   try {
-    const existing = JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+    const existing = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as UTMParams : {}
     sessionStorage.setItem(UTM_STORAGE_KEY, JSON.stringify({ ...existing, ...utm }))
   } catch { /* storage unavailable */ }
 }
@@ -69,7 +72,8 @@ function persistUTM(utm: UTMParams): void {
 function getPersistedUTM(): UTMParams {
   if (typeof sessionStorage === 'undefined') return {}
   try {
-    return JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as UTMParams : {}
   } catch {
     return {}
   }
@@ -105,10 +109,8 @@ export class BagdockAnalytics {
       const freshUTM = parseUTM()
       if (Object.keys(freshUTM).length > 0) {
         persistUTM(freshUTM)
-        this.utm = freshUTM
-      } else {
-        this.utm = getPersistedUTM()
       }
+      this.utm = getPersistedUTM()
 
       window.addEventListener('beforeunload', () => this.flush())
       if (typeof document !== 'undefined') {
