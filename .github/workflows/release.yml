@@ -22,7 +22,7 @@ jobs:
       - name: Check if tag already exists
         id: tag_check
         run: |
-          if git rev-parse "v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --tags origin "refs/tags/v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -37,4 +37,4 @@ jobs:
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \
-            --target main
+            --target "${{ github.event.pull_request.merge_commit_sha }}"
