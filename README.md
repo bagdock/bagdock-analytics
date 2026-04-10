@@ -14,9 +14,10 @@
 
 # @bagdock/analytics
 
-Lightweight client-side event tracking for the Bagdock platform — automatic batching, deduplication, UTM attribution, and graceful teardown.
+Track events, attribute conversions, and measure engagement across Bagdock-powered self-storage apps. The SDK batches events client-side, deduplicates within a configurable window, captures UTM attribution automatically, and flushes gracefully on page unload.
 
 [![npm version](https://img.shields.io/npm/v/@bagdock/analytics.svg)](https://www.npmjs.com/package/@bagdock/analytics)
+[![Bundle size](https://img.shields.io/bundlephobia/minzip/@bagdock/analytics)](https://bundlephobia.com/package/@bagdock/analytics)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## Install
@@ -27,84 +28,87 @@ npm install @bagdock/analytics
 bun add @bagdock/analytics
 ```
 
-## How it works
+## How tracking works
 
-The SDK queues events client-side, deduplicates within a configurable window, and flushes in batches to the Bagdock Loyalty API. On page unload it uses `sendBeacon` to avoid data loss.
-
-```mermaid
-graph LR
-  subgraph Browser
-    SDK["@bagdock/analytics"]
-    Queue["Event Queue"]
-    Dedup["Dedup Filter"]
-  end
-
-  SDK --> Dedup --> Queue
-  Queue -- "flush (batch)" --> API["Loyalty API<br/>/api/loyalty/events"]
-  Queue -- "beforeunload" --> Beacon["sendBeacon"]
-  Beacon --> API
-```
-
-### Event lifecycle
+Your app calls `track()` methods. The SDK deduplicates, queues, and flushes events in batches to the Bagdock API over HTTPS.
 
 ```mermaid
 sequenceDiagram
   participant App
   participant SDK as @bagdock/analytics
-  participant API as Loyalty API
+  participant API as Bagdock API
 
   App->>SDK: track({ eventType: 'lead' })
-  SDK->>SDK: Dedup check (hash + window)
+  SDK->>SDK: Dedup check
   SDK->>SDK: Attach UTM metadata
-  SDK->>SDK: Queue event (1/25)
+  SDK->>SDK: Queue event
 
-  Note over SDK: Flush timer (every 5s) or batch full (25)
+  Note over SDK: Flush on timer (5 s) or batch full (25)
 
-  SDK->>API: POST /api/loyalty/events<br/>Authorization: Bearer ak_...
+  SDK->>API: POST /api/loyalty/events
   API-->>SDK: 200 OK
 ```
 
+On `beforeunload` and `visibilitychange`, the SDK flushes with `navigator.sendBeacon` so no events are lost during navigation.
+
 ---
 
-## Quick start
+## Get started
 
 ```typescript
 import { BagdockAnalytics } from '@bagdock/analytics'
 
 const analytics = new BagdockAnalytics({
-  apiKey: 'ak_live_...',
+  apiKey: 'YOUR_API_KEY',
   autoPageView: true,
-  debug: process.env.NODE_ENV === 'development',
 })
 
-// Track a lead conversion
 analytics.trackLead({
   operatorId: 'opreg_acme',
   referralCode: 'REF123',
   metadata: { source: 'pricing_page' },
 })
 
-// Track a sale
 analytics.trackSale({
   operatorId: 'opreg_acme',
   valuePence: 14900,
   currency: 'GBP',
 })
 
-// Flush immediately (e.g., before navigation)
 await analytics.flush()
-
-// Teardown (flushes remaining events, clears timers)
 analytics.destroy()
 ```
 
 ---
 
-## Use cases
+## How to track UTM attribution
 
-### 1. Next.js App Router (React provider)
+The SDK captures UTM parameters from the URL on init, persists them in `sessionStorage` for the tab's lifetime, and attaches them as metadata to every event.
 
-Wrap your app in an `AnalyticsProvider` that initializes once and tracks route changes.
+```typescript
+// User lands on: https://example.com?utm_source=google&utm_medium=cpc&utm_campaign=spring
+
+const analytics = new BagdockAnalytics({ apiKey: 'YOUR_API_KEY' })
+
+analytics.getUTM()
+// → { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'spring' }
+
+analytics.trackLead({ operatorId: 'opreg_acme' })
+// → event metadata includes utm_source, utm_medium, utm_campaign
+```
+
+Parse UTM parameters from any URL:
+
+```typescript
+import { parseUTM } from '@bagdock/analytics'
+
+parseUTM('https://example.com?utm_source=partner&utm_campaign=launch')
+// → { utm_source: 'partner', utm_campaign: 'launch' }
+```
+
+## How to use with Next.js App Router
+
+Create a provider component that initializes the SDK once and tracks route changes:
 
 ```tsx
 'use client'
@@ -113,93 +117,56 @@ import { useEffect, useRef } from 'react'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { BagdockAnalytics } from '@bagdock/analytics'
 
-let globalAnalytics: BagdockAnalytics | null = null
-
-export function getAnalytics(): BagdockAnalytics | null {
-  return globalAnalytics
-}
-
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const analyticsRef = useRef<BagdockAnalytics | null>(null)
-  const prevPathRef = useRef<string>('')
+  const ref = useRef<BagdockAnalytics | null>(null)
+  const prevPath = useRef('')
 
   useEffect(() => {
-    const apiKey = process.env.NEXT_PUBLIC_ANALYTICS_API_KEY
-    if (!apiKey) return
-
-    if (!analyticsRef.current) {
-      analyticsRef.current = new BagdockAnalytics({
-        apiKey,
+    if (!ref.current) {
+      ref.current = new BagdockAnalytics({
+        apiKey: process.env.NEXT_PUBLIC_ANALYTICS_API_KEY!,
         autoPageView: true,
-        debug: process.env.NODE_ENV === 'development',
       })
-      globalAnalytics = analyticsRef.current
     }
-
-    return () => {
-      analyticsRef.current?.destroy()
-      analyticsRef.current = null
-      globalAnalytics = null
-    }
+    return () => { ref.current?.destroy(); ref.current = null }
   }, [])
 
   useEffect(() => {
-    const fullPath = pathname + (searchParams?.toString() ? `?${searchParams.toString()}` : '')
-    if (fullPath === prevPathRef.current) return
-    prevPathRef.current = fullPath
-    analyticsRef.current?.trackPageView()
+    const path = pathname + (searchParams?.toString() ? `?${searchParams}` : '')
+    if (path !== prevPath.current) {
+      prevPath.current = path
+      ref.current?.trackPageView()
+    }
   }, [pathname, searchParams])
 
   return <>{children}</>
 }
 ```
 
-### 2. UTM attribution tracking
+Wrap your root layout:
 
-The SDK automatically captures UTM parameters from the URL on initialization, persists them in `sessionStorage`, and attaches them to every subsequent event.
-
-```typescript
-// User lands on: https://example.com?utm_source=google&utm_medium=cpc&utm_campaign=spring
-
-const analytics = new BagdockAnalytics({ apiKey: 'ak_live_...' })
-
-// UTM params are captured automatically
-console.log(analytics.getUTM())
-// { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'spring' }
-
-// Every tracked event now includes UTM metadata
-analytics.trackLead({ operatorId: 'opreg_acme' })
-// → POST payload includes metadata: { utm_source: 'google', utm_medium: 'cpc', ... }
+```tsx
+<AnalyticsProvider>
+  {children}
+</AnalyticsProvider>
 ```
 
-You can also parse UTM params manually:
+## How to track embed and widget events
+
+Track renders and clicks from embedded widgets on partner sites:
 
 ```typescript
-import { parseUTM } from '@bagdock/analytics'
+const analytics = new BagdockAnalytics({ apiKey: 'YOUR_API_KEY' })
 
-const utm = parseUTM('https://example.com?utm_source=partner&utm_campaign=launch')
-// { utm_source: 'partner', utm_campaign: 'launch' }
-```
-
-### 3. Embed / widget tracking
-
-Track render events and clicks from embedded widgets or iframes.
-
-```typescript
-const analytics = new BagdockAnalytics({ apiKey: 'ak_live_...' })
-
-// Track when a widget renders on a partner site
 analytics.trackEmbedRender('opreg_acme')
-
-// Track link clicks with referral attribution
 analytics.trackClick('link_abc123', 'REF456')
 ```
 
-### 4. Loyalty program events
+## How to track loyalty program events
 
-Track points earned, rewards redeemed, and referral completions.
+Track points, rewards, and referrals:
 
 ```typescript
 analytics.track({
@@ -207,7 +174,6 @@ analytics.track({
   memberId: 'mem_abc',
   operatorId: 'opreg_acme',
   valuePence: 500,
-  metadata: { reason: 'monthly_rental' },
 })
 
 analytics.track({
@@ -225,21 +191,21 @@ analytics.track({
 
 ---
 
-## API reference
-
-### `BagdockAnalytics`
+## Methods
 
 | Method | Description |
 |--------|-------------|
-| `track(event)` | Track a custom event with full control over the payload |
+| `track(event)` | Track any event with full control over the payload |
 | `trackClick(linkId, referralCode?)` | Track a link click with optional referral attribution |
 | `trackLead(params)` | Track a lead conversion |
 | `trackSale(params)` | Track a completed sale |
-| `trackPageView()` | Track a page view (auto-captures URL and referrer) |
+| `trackPageView()` | Track a page view (captures URL and referrer automatically) |
 | `trackEmbedRender(operatorId?)` | Track when an embedded widget renders |
-| `getUTM()` | Returns the current UTM attribution context |
-| `flush()` | Flush the event queue immediately (returns `Promise<void>`) |
-| `destroy()` | Flush remaining events, clear timers, and tear down listeners |
+| `getUTM()` | Return the current UTM attribution context |
+| `flush()` | Flush the event queue immediately |
+| `destroy()` | Flush remaining events, clear timers, remove listeners |
+
+## Types
 
 ### `TrackableEvent`
 
@@ -267,57 +233,52 @@ type EventType =
   | 'reward_redeemed' | 'points_earned' | 'referral_completed'
 ```
 
-### Utility exports
+### Exports
 
-| Export | Description |
-|--------|-------------|
-| `parseUTM(url?)` | Parse UTM parameters from a URL string (or `window.location.href`) |
-| `UTMParams` | TypeScript interface for UTM parameter shape |
-| `BagdockAnalyticsConfig` | Configuration interface |
-| `TrackableEvent` | Event payload interface |
-| `EventType` | Union type of all supported event types |
+| Export | Type | Description |
+|--------|------|-------------|
+| `BagdockAnalytics` | class | Main SDK class |
+| `parseUTM` | function | Parse UTM parameters from a URL |
+| `BagdockAnalyticsConfig` | interface | Constructor config shape |
+| `TrackableEvent` | interface | Event payload shape |
+| `EventType` | type | Union of supported event type strings |
+| `UTMParams` | interface | UTM parameter shape |
 
-## Configuration
+## How to configure the SDK
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `apiKey` | `string` | — | **Required.** Your Bagdock analytics API key |
-| `baseUrl` | `string` | `https://loyalty-api.bagdock.com` | Loyalty API base URL |
-| `flushIntervalMs` | `number` | `5000` | Flush interval in milliseconds |
-| `batchSize` | `number` | `25` | Max events per batch before auto-flush |
-| `dedupWindowMs` | `number` | `500` | Dedup window — identical events within this window are dropped |
-| `autoPageView` | `boolean` | `false` | Automatically track a page view on init |
-| `debug` | `boolean` | `false` | Log SDK activity to console |
+| `apiKey` | `string` | — | **Required.** Your Bagdock API key |
+| `baseUrl` | `string` | `https://loyalty-api.bagdock.com` | API base URL |
+| `flushIntervalMs` | `number` | `5000` | How often to flush queued events (ms) |
+| `batchSize` | `number` | `25` | Max events per flush batch |
+| `dedupWindowMs` | `number` | `500` | Window for dropping duplicate events (ms) |
+| `autoPageView` | `boolean` | `false` | Track a page view on init |
+| `debug` | `boolean` | `false` | Log SDK activity to the console |
 
-## Batching and deduplication
+## How batching and deduplication work
 
-Events are queued and flushed on a timer or when the batch size is reached. Duplicate events (same `eventType + linkId + referralCode + memberId`) within the dedup window are silently dropped.
+Events queue in memory and flush on a timer or when the batch size fills. Duplicate events — defined as matching `eventType`, `linkId`, `referralCode`, and `memberId` — within the dedup window are dropped silently.
 
 ```mermaid
 graph TD
   A["track() called"] --> B{"Duplicate?"}
-  B -- Yes --> C["Drop silently"]
+  B -- Yes --> C["Drop"]
   B -- No --> D["Add to queue"]
-  D --> E{"Queue >= batchSize?"}
-  E -- Yes --> F["Flush immediately"]
-  E -- No --> G["Wait for flush timer"]
+  D --> E{"Queue full?"}
+  E -- Yes --> F["Flush"]
+  E -- No --> G["Wait for timer"]
   G --> F
-  F --> H["POST /api/loyalty/events"]
 ```
 
-On page unload (`beforeunload`) and visibility change (`visibilitychange → hidden`), the SDK flushes using `navigator.sendBeacon` to avoid losing events during navigation.
+## Data privacy and security
 
-## Zero dependencies
-
-This SDK has no external runtime dependencies. It uses the native `fetch` API and `navigator.sendBeacon` for reliability. Designed to be as lightweight as possible for client-side use.
-
-## Security
-
-- The SDK only sends data **outbound** to the Loyalty API — it never reads or stores PII
-- API keys should be scoped to analytics write access only
-- UTM data is stored in `sessionStorage` (per-tab, cleared on tab close)
-- All API requests use `Authorization: Bearer` headers over HTTPS
+- **Outbound only.** The SDK sends event data to the Bagdock API. It does not read cookies, fingerprint browsers, or collect PII.
+- **Scoped API keys.** Use a key scoped to analytics write access. Never embed keys with broader permissions in client-side code.
+- **Session-scoped UTM storage.** UTM data lives in `sessionStorage`, scoped to the current tab. It is cleared when the tab closes.
+- **HTTPS enforced.** All API requests use `Authorization: Bearer` headers over TLS.
+- **Zero dependencies.** No third-party runtime code. The SDK uses native `fetch` and `navigator.sendBeacon`.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
