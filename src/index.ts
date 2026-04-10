@@ -33,6 +33,48 @@ export interface BagdockAnalyticsConfig {
   debug?: boolean
 }
 
+export interface UTMParams {
+  utm_source?: string
+  utm_medium?: string
+  utm_campaign?: string
+  utm_term?: string
+  utm_content?: string
+}
+
+export function parseUTM(url?: string): UTMParams {
+  if (typeof window === 'undefined' && !url) return {}
+  try {
+    const params = new URL(url || window.location.href).searchParams
+    const utm: UTMParams = {}
+    for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'] as const) {
+      const val = params.get(key)
+      if (val) utm[key] = val
+    }
+    return utm
+  } catch {
+    return {}
+  }
+}
+
+const UTM_STORAGE_KEY = 'bagdock_utm'
+
+function persistUTM(utm: UTMParams): void {
+  if (typeof sessionStorage === 'undefined') return
+  try {
+    const existing = JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+    sessionStorage.setItem(UTM_STORAGE_KEY, JSON.stringify({ ...existing, ...utm }))
+  } catch { /* storage unavailable */ }
+}
+
+function getPersistedUTM(): UTMParams {
+  if (typeof sessionStorage === 'undefined') return {}
+  try {
+    return JSON.parse(sessionStorage.getItem(UTM_STORAGE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
 const DEFAULT_BASE_URL = 'https://loyalty-api.bagdock.com'
 const DEFAULT_FLUSH_INTERVAL = 5_000
 const DEFAULT_BATCH_SIZE = 25
@@ -44,6 +86,7 @@ export class BagdockAnalytics {
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private recentHashes = new Map<string, number>()
   private flushing = false
+  private utm: UTMParams = {}
 
   constructor(config: BagdockAnalyticsConfig) {
     this.config = {
@@ -59,6 +102,14 @@ export class BagdockAnalytics {
     this.startFlushTimer()
 
     if (typeof window !== 'undefined') {
+      const freshUTM = parseUTM()
+      if (Object.keys(freshUTM).length > 0) {
+        persistUTM(freshUTM)
+        this.utm = freshUTM
+      } else {
+        this.utm = getPersistedUTM()
+      }
+
       window.addEventListener('beforeunload', () => this.flush())
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
@@ -69,16 +120,26 @@ export class BagdockAnalytics {
     }
   }
 
+  getUTM(): UTMParams {
+    return { ...this.utm }
+  }
+
   track(event: TrackableEvent): void {
     if (this.isDuplicate(event)) {
       this.log('Dedup: dropping duplicate event', event.eventType)
       return
     }
 
+    const hasUTM = Object.keys(this.utm).length > 0
+    const metadata = hasUTM
+      ? { ...this.utm, ...event.metadata }
+      : event.metadata
+
     this.queue.push({
       ...event,
       landingPage: event.landingPage || (typeof window !== 'undefined' ? window.location.href : undefined),
       referrer: event.referrer || (typeof document !== 'undefined' ? document.referrer : undefined),
+      metadata,
     })
 
     this.log('Queued:', event.eventType, `(${this.queue.length}/${this.config.batchSize})`)
