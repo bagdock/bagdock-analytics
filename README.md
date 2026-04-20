@@ -159,6 +159,42 @@ Wrap your root layout:
 </AnalyticsProvider>
 ```
 
+## How to track self-storage lifecycle events
+
+Track key moments in the rental and deal lifecycle:
+
+```typescript
+// Rental reserved from checkout
+analytics.track({
+  eventType: 'rental.reserved',
+  operatorId: 'opreg_acme',
+  metadata: { unitId: 'unit_abc', facilitySlug: 'central-london' },
+})
+
+// Move-in completed
+analytics.track({
+  eventType: 'rental.moved_in',
+  operatorId: 'opreg_acme',
+  metadata: { rentalId: 'rent_xyz' },
+})
+
+// Deal won (converted to rental)
+analytics.track({
+  eventType: 'deal.won',
+  operatorId: 'opreg_acme',
+  valuePence: 14900,
+  metadata: { dealId: 'deal_123', stage: 'closed_won' },
+})
+
+// Checkout completed
+analytics.track({
+  eventType: 'checkout.completed',
+  operatorId: 'opreg_acme',
+  valuePence: 9900,
+  currency: 'GBP',
+})
+```
+
 ## How to track embed and widget events
 
 Track renders and clicks from embedded widgets on partner sites:
@@ -264,9 +300,25 @@ interface TrackableEvent {
 
 ```typescript
 type EventType =
+  // Engagement
   | 'click' | 'lead' | 'sale' | 'signup' | 'embed_render'
   | 'share' | 'qr_scan' | 'deep_link_open' | 'page_view'
+  // Loyalty
   | 'reward_redeemed' | 'points_earned' | 'referral_completed'
+  // Self-storage lifecycle
+  | 'rental.reserved' | 'rental.paid' | 'rental.activated'
+  | 'rental.moved_in' | 'rental.moved_out'
+  | 'rental.renewed' | 'rental.cancelled' | 'rental.completed'
+  // Deals / CRM
+  | 'deal.created' | 'deal.stage_changed' | 'deal.won' | 'deal.lost'
+  // Units
+  | 'unit.occupied' | 'unit.vacated'
+  // Checkout
+  | 'checkout.started' | 'checkout.completed' | 'checkout.abandoned'
+  // Marketing
+  | 'marketing_event.attendance_recorded'
+  // Contact
+  | 'contact.identified' | 'contact.lifecycle_changed'
 ```
 
 ### `IdentifyParams`
