@@ -16,6 +16,15 @@ export interface TrackableEvent {
   metadata?: Record<string, unknown>
 }
 
+export interface IdentifyParams {
+  /** Known contact/user ID (e.g. email, contact prefixed ID) */
+  contactId: string
+  /** Operator slug or ID for scoping */
+  operatorId?: string
+  /** Extra traits to persist on the contact (name, email, etc.) */
+  traits?: Record<string, unknown>
+}
+
 export interface BagdockAnalyticsConfig {
   /** API key or embed token */
   apiKey: string
@@ -79,10 +88,59 @@ function getPersistedUTM(): UTMParams {
   }
 }
 
+const ANON_ID_KEY = 'bagdock_anon_id'
 const DEFAULT_BASE_URL = 'https://loyalty-api.bagdock.com'
 const DEFAULT_FLUSH_INTERVAL = 5_000
 const DEFAULT_BATCH_SIZE = 25
 const DEFAULT_DEDUP_WINDOW = 500
+
+function generateAnonId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function getCookie(name: string): string | undefined {
+  if (typeof document === 'undefined') return undefined
+  const match = document.cookie.match(new RegExp(`(?:^|;)\\s*${name}=([^;]+)`))
+  return match ? decodeURIComponent(match[1]) : undefined
+}
+
+function setCrossDomainCookie(name: string, value: string): void {
+  if (typeof document === 'undefined') return
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
+  const domain = hostname.endsWith('bagdock.com') ? '.bagdock.com' : undefined
+  const maxAge = 60 * 60 * 24 * 400 // 400 days — browser upper bound
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    'path=/',
+    `max-age=${maxAge}`,
+    'samesite=lax',
+  ]
+  if (domain) parts.push(`domain=${domain}`)
+  if (hostname !== 'localhost') parts.push('secure')
+  document.cookie = parts.join('; ')
+}
+
+function getOrCreateAnonId(): string {
+  const fromCookie = getCookie(ANON_ID_KEY)
+  if (fromCookie) {
+    try { localStorage?.setItem(ANON_ID_KEY, fromCookie) } catch { /* noop */ }
+    return fromCookie
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const existing = localStorage.getItem(ANON_ID_KEY)
+      if (existing) {
+        setCrossDomainCookie(ANON_ID_KEY, existing)
+        return existing
+      }
+    } catch { /* noop */ }
+  }
+  const id = generateAnonId()
+  try { localStorage?.setItem(ANON_ID_KEY, id) } catch { /* noop */ }
+  setCrossDomainCookie(ANON_ID_KEY, id)
+  return id
+}
 
 export class BagdockAnalytics {
   private config: Required<BagdockAnalyticsConfig>
@@ -91,6 +149,7 @@ export class BagdockAnalytics {
   private recentHashes = new Map<string, number>()
   private flushing = false
   private utm: UTMParams = {}
+  private _anonymousId: string
 
   constructor(config: BagdockAnalyticsConfig) {
     this.config = {
@@ -103,6 +162,7 @@ export class BagdockAnalytics {
       debug: config.debug ?? false,
     }
 
+    this._anonymousId = typeof window !== 'undefined' ? getOrCreateAnonId() : generateAnonId()
     this.startFlushTimer()
 
     if (typeof window !== 'undefined') {
@@ -124,6 +184,50 @@ export class BagdockAnalytics {
 
   getUTM(): UTMParams {
     return { ...this.utm }
+  }
+
+  get anonymousId(): string {
+    return this._anonymousId
+  }
+
+  /**
+   * Stitch the current anonymous ID to a known contact.
+   *
+   * Fires a POST to the operator's identify relay endpoint so the
+   * backend can upsert `contact_anonymous_ids` and attach attribution
+   * data gathered before the visitor was identified.
+   *
+   * @param params.contactId  Known contact or user ID
+   * @param params.operatorId Optional operator scope
+   * @param params.traits     Extra contact traits (name, email, etc.)
+   */
+  async identify(params: IdentifyParams): Promise<void> {
+    const payload = {
+      anonymous_id: this._anonymousId,
+      contact_id: params.contactId,
+      operator_id: params.operatorId,
+      traits: params.traits,
+      utm: Object.keys(this.utm).length > 0 ? this.utm : undefined,
+      landing_page: typeof window !== 'undefined' ? window.location.href : undefined,
+      referrer: typeof document !== 'undefined' ? document.referrer : undefined,
+    }
+
+    this.log('identify →', payload.contact_id, payload.anonymous_id)
+
+    try {
+      const url = `${this.config.baseUrl}/api/identify`
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      })
+    } catch (err) {
+      this.log('identify error:', err)
+    }
   }
 
   track(event: TrackableEvent): void {
@@ -220,6 +324,7 @@ export class BagdockAnalytics {
   private toApiPayload(event: TrackableEvent) {
     return {
       event_type: event.eventType,
+      anonymous_id: this._anonymousId,
       link_id: event.linkId,
       member_id: event.memberId,
       operator_id: event.operatorId,
