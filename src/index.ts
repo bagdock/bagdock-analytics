@@ -1,7 +1,23 @@
 export type EventType =
+  // Engagement
   | 'click' | 'lead' | 'sale' | 'signup' | 'embed_render'
   | 'share' | 'qr_scan' | 'deep_link_open' | 'page_view'
+  // Loyalty
   | 'reward_redeemed' | 'points_earned' | 'referral_completed'
+  // Self-storage lifecycle
+  | 'rental.reserved' | 'rental.paid' | 'rental.activated'
+  | 'rental.moved_in' | 'rental.moved_out'
+  | 'rental.renewed' | 'rental.cancelled' | 'rental.completed'
+  // Deals / CRM
+  | 'deal.created' | 'deal.stage_changed' | 'deal.won' | 'deal.lost'
+  // Units
+  | 'unit.occupied' | 'unit.vacated'
+  // Checkout
+  | 'checkout.started' | 'checkout.completed' | 'checkout.abandoned'
+  // Marketing
+  | 'marketing_event.attendance_recorded'
+  // Contact
+  | 'contact.identified' | 'contact.lifecycle_changed'
 
 export interface TrackableEvent {
   eventType: EventType
