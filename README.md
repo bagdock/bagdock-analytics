@@ -14,7 +14,7 @@
 
 # @bagdock/analytics
 
-Track events, attribute conversions, and measure engagement across Bagdock-powered self-storage apps. The SDK batches events client-side, deduplicates within a configurable window, captures UTM attribution automatically, and flushes gracefully on page unload.
+Track events, identify visitors, attribute conversions, and measure engagement across Bagdock-powered self-storage apps. The SDK batches events client-side, deduplicates within a configurable window, captures UTM attribution automatically, stitches anonymous visitors to known contacts, and flushes gracefully on page unload.
 
 [![npm version](https://img.shields.io/npm/v/@bagdock/analytics.svg)](https://www.npmjs.com/package/@bagdock/analytics)
 [![Bundle size](https://img.shields.io/bundlephobia/minzip/@bagdock/analytics)](https://bundlephobia.com/package/@bagdock/analytics)
@@ -40,13 +40,19 @@ sequenceDiagram
 
   App->>SDK: track({ eventType: 'lead' })
   SDK->>SDK: Dedup check
-  SDK->>SDK: Attach UTM metadata
+  SDK->>SDK: Attach UTM + anonymous_id
   SDK->>SDK: Queue event
 
   Note over SDK: Flush on timer (5 s) or batch full (25)
 
   SDK->>API: POST /api/loyalty/events
   API-->>SDK: 200 OK
+
+  Note over App: User logs in or completes checkout
+
+  App->>SDK: identify({ contactId: 'ct_abc' })
+  SDK->>API: POST /api/identify
+  API-->>SDK: 200 OK { stitched }
 ```
 
 On `beforeunload` and `visibilitychange`, the SDK flushes with `navigator.sendBeacon` so no events are lost during navigation.
@@ -191,6 +197,34 @@ analytics.track({
 
 ---
 
+## How to identify visitors
+
+When a visitor logs in, completes checkout, or submits a form, call `identify()` to stitch their anonymous browsing history to a known contact record. The SDK sends the anonymous ID to the Bagdock identify relay, which upserts a `contact_anonymous_ids` row in the operator database and backfills first-touch UTM attribution.
+
+```typescript
+const analytics = new BagdockAnalytics({ apiKey: 'YOUR_API_KEY' })
+
+// After login / checkout / form submission
+await analytics.identify({
+  contactId: 'ct_abc123',
+  operatorId: 'opreg_acme',
+  traits: {
+    email: 'jane@example.com',
+    firstName: 'Jane',
+  },
+})
+```
+
+The anonymous ID is generated on first visit and persisted in both `localStorage` and a cross-subdomain cookie (`bagdock_anon_id`, `.bagdock.com`, 400-day TTL). This ensures the same anonymous ID follows a visitor across `bagdock.com` subdomains — marketing site, checkout, customer app — so pre-identify page views are attributed correctly after the visitor is identified.
+
+```typescript
+// Read the anonymous ID at any time
+analytics.anonymousId
+// → "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+```
+
+---
+
 ## Methods
 
 | Method | Description |
@@ -201,6 +235,8 @@ analytics.track({
 | `trackSale(params)` | Track a completed sale |
 | `trackPageView()` | Track a page view (captures URL and referrer automatically) |
 | `trackEmbedRender(operatorId?)` | Track when an embedded widget renders |
+| `identify(params)` | Stitch the current anonymous ID to a known contact |
+| `anonymousId` | Getter — the current anonymous ID (generated or restored) |
 | `getUTM()` | Return the current UTM attribution context |
 | `flush()` | Flush the event queue immediately |
 | `destroy()` | Flush remaining events, clear timers, remove listeners |
@@ -233,6 +269,16 @@ type EventType =
   | 'reward_redeemed' | 'points_earned' | 'referral_completed'
 ```
 
+### `IdentifyParams`
+
+```typescript
+interface IdentifyParams {
+  contactId: string
+  operatorId?: string
+  traits?: Record<string, unknown>
+}
+```
+
 ### Exports
 
 | Export | Type | Description |
@@ -241,6 +287,7 @@ type EventType =
 | `parseUTM` | function | Parse UTM parameters from a URL |
 | `BagdockAnalyticsConfig` | interface | Constructor config shape |
 | `TrackableEvent` | interface | Event payload shape |
+| `IdentifyParams` | interface | Parameters for `identify()` |
 | `EventType` | type | Union of supported event type strings |
 | `UTMParams` | interface | UTM parameter shape |
 
@@ -273,7 +320,8 @@ graph TD
 
 ## Data privacy and security
 
-- **Outbound only.** The SDK sends event data to the Bagdock API. It does not read cookies, fingerprint browsers, or collect PII.
+- **Outbound only.** The SDK sends event data to the Bagdock API. It does not fingerprint browsers or collect PII beyond what you explicitly pass to `identify()`.
+- **Anonymous ID cookie.** A `bagdock_anon_id` cookie is set on `.bagdock.com` with `SameSite=lax` and a 400-day TTL. It contains a random UUID used solely for identity stitching — no PII. On non-Bagdock domains or localhost the cookie is scoped to the current host.
 - **Scoped API keys.** Use a key scoped to analytics write access. Never embed keys with broader permissions in client-side code.
 - **Session-scoped UTM storage.** UTM data lives in `sessionStorage`, scoped to the current tab. It is cleared when the tab closes.
 - **HTTPS enforced.** All API requests use `Authorization: Bearer` headers over TLS.
