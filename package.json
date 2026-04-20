@@ -1,6 +1,6 @@
 {
   "name": "@bagdock/analytics",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Bagdock Analytics SDK — lightweight client-side event tracking with batching and dedup",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
